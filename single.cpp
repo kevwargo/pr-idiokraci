@@ -15,8 +15,6 @@
 #define REQUEST_TAG		102
 #define AGREE_TAG		103
 
-#define ENTER_SECTION	1
-#define EXIT_SECTION	0
 
 using namespace std;
 
@@ -102,7 +100,7 @@ void *mpi_thread(void *arg) {
                                 }
                                 break;
                             default:
-                                log("comm: Unknown message tag %d", status.Get_tag());
+                                log(state, "comm: Unknown message tag %d", status.Get_tag());
                         }
                     }
                     inside = true;
@@ -126,7 +124,7 @@ void *mpi_thread(void *arg) {
             case AGREE_TAG:
                 break;
             default:
-                log("comm: Unknown message tag %d", status.Get_tag());
+                log(state, "comm: Unknown message tag %d", status.Get_tag());
         }
     }
 }
@@ -147,7 +145,7 @@ void mainloop(struct State *state)
         MPI::COMM_WORLD.Send(&buf, 1, MPI::INT, state->rank, INSIDE_TAG);
 
         // wait_for_enter_critical_section();
-        log(state, "main: Before mutex wait");
+        log(state, "main: Waiting for critical section...");
         unique_lock<mutex> lck(state->mtx);
         while (!state->ready) {
             state->cv.wait(lck);
@@ -156,7 +154,7 @@ void mainloop(struct State *state)
         state->ready = false;
 
         interval = rand() % 8;
-        log(state, "main: Sleeping %d in", interval);
+        log(state, "main: Entered critical section. Sleeping %d", interval);
         sleep(interval);
 
         // exit_critical_section();
