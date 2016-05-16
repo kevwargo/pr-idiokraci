@@ -35,7 +35,7 @@ void randomize(int rank)
 {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    printf("%d: initing srand with seed %d\n", rank, tv.tv_usec + rank);
+    // printf("%d: initing srand with seed %d\n", rank, tv.tv_usec + rank);
     srand(tv.tv_usec + rank);
 }
 
