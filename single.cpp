@@ -137,7 +137,7 @@ void mainloop(struct State *state)
     int buf = 0;
     while (1) {
         int interval = rand() % 8;
-        log(state, "main: Sleeping %d before", interval);
+        log(state, "main: Outside sleep: %d", interval);
         sleep(interval);
 
         // notify_critical_section();
@@ -154,7 +154,7 @@ void mainloop(struct State *state)
         state->ready = false;
 
         interval = rand() % 8;
-        log(state, "main: Entered critical section. Sleeping %d", interval);
+        log(state, "main: Inside sleep: %d", interval);
         sleep(interval);
 
         // exit_critical_section();
