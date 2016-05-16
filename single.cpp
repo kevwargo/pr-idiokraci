@@ -52,7 +52,7 @@ void log(struct State *state, char *fmt, ...) {
     va_start(args, fmt);
     vasprintf(&str, fmt, args);
     va_end(args);
-    printf("%.3d, %.3d: %s\n", state->lamport, state->rank, str);
+    printf("%*d, %*d: %s\n", 4, state->lamport, 4, state->rank, str);
     free(str);
 }
 
