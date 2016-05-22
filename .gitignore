@@ -30,3 +30,5 @@
 *~
 \#*
 hostfile
+*.log
+log

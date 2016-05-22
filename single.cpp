@@ -4,9 +4,12 @@
 #include <mutex>
 #include <condition_variable>
 #include <set>
+#include <string>
+#include <iostream>
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/time.h>
@@ -86,7 +89,7 @@ void *mpi_thread(void *arg) {
                         state->lamport = max(state->lamport, buf) + 1;
                         switch (status.Get_tag()) {
                             case REQUEST_TAG:
-                                if (buf < request_clock || (buf == request_clock && state->rank < status.Get_source())) {
+                                if (request_clock < buf || (buf == request_clock && state->rank < status.Get_source())) {
                                     // current process has higher priority
                                     queue.insert(status.Get_source());
                                 } else {
@@ -97,6 +100,7 @@ void *mpi_thread(void *arg) {
                             case AGREE_TAG:
                                 if (buf > request_clock) {
                                     replies_received++;
+                                    log(state, "comm: Agree %d received from %d", buf, status.Get_source());
                                 }
                                 break;
                             default:
@@ -110,15 +114,27 @@ void *mpi_thread(void *arg) {
                     lck.unlock();
                 } else {
                     // broadcast agree to all in queue
+                    char *repr = (char *)malloc(1024);
+                    *repr = '\0';
+                    for (int p : queue) {
+                        sprintf(repr + strlen(repr), "%d, ", p);
+                    }
+                    state->lamport++;
+                    log(state, "comm: !!! LEFT, %s", repr);
+                    free(repr);
                     for (int p : queue) {
                         MPI::COMM_WORLD.Send(&state->lamport, 1, MPI::INT, p, AGREE_TAG);
                     }
                     queue.clear();
+                    inside = false;
                 }
                 break;
             case REQUEST_TAG:
                 if (inside) {
                     queue.insert(status.Get_source());
+                } else {
+                    MPI::COMM_WORLD.Send(&state->lamport, 1, MPI::INT, status.Get_source(), AGREE_TAG);
+                    state->lamport++;
                 }
                 break;
             case AGREE_TAG:
@@ -154,11 +170,11 @@ void mainloop(struct State *state)
         state->ready = false;
 
         interval = rand() % 8;
-        log(state, "main: Inside sleep: %d", interval);
+        log(state, "main: !!! ENTERED (sleep: %d)", interval);
         sleep(interval);
 
         // exit_critical_section();
-        log(state, "main: Sending exit INSIDE");
+        // log(state, "main: Sending exit INSIDE");
         MPI::COMM_WORLD.Send(&buf, 1, MPI::INT, state->rank, INSIDE_TAG);
     }
 }
@@ -180,7 +196,22 @@ int main(int argc, char **argv)
     state.lamport = 0;
     randomize(state.rank);
     if (state.rank == 0) {
-        printf("Thread support provided: %d\n", thread_support_provided);
+        printf("Thread support provided: ", thread_support_provided);
+        switch (thread_support_provided) {
+            case MPI_THREAD_SINGLE:
+                printf("single");
+                break;
+            case MPI_THREAD_FUNNELED:
+                printf("funneled");
+                break;
+            case MPI_THREAD_SERIALIZED:
+                printf("serialized");
+                break;
+            case MPI_THREAD_MULTIPLE:
+                printf("multiple");
+                break;
+        }
+        putchar('\n');
     }
 
     thread t = thread(mpi_thread, &state);
