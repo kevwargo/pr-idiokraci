@@ -65,6 +65,7 @@ int id,        // Id firmy / procesu
 // Program variables
 int idiots;    // Liczba idiotow
 int lamport;   // Zegar Lamporta, poczatkowa wartosc to 0
+int tmp_idiots;// Poprzednia liczba idiotow, jest trzymana na potrzeby wyslania wiadomosci o zwolnieniu kliniki
 
 int miejscaZajete() {
     int res = 0;
@@ -234,7 +235,10 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
 
     printf("%d %d : Firma <%d> otrzymala dostep do kliniki z %d idiotami\n", lamport, id, id, K - miejscaZajete() < idiots ? K - miejscaZajete() : idiots);
 
+    tmp_idiots = idiots;
+    klinikainside.push_back(request);
     idiots = idiots - K - miejscaZajete() > 0 ? idiots - K - miejscaZajete() : 0;
+
 
     delete [] agree;
 }
@@ -325,11 +329,9 @@ void state2bCommunication() {
 
 void state2cCommunication() {
     tmessage leave;
-    leave.pid = id;      // Nasze id, potrzebne do priorytetu
-    leave.tim = lamport; // Nasz zegar
-    leave.val = 0;       // Nieistotna juz wartosc, bo i tak wszystkie firmy posiadaja info o liczbie zajetych przez niego miejsc
-
-
+    leave.pid = id;          // Nasze id, potrzebne do priorytetu
+    leave.tim = lamport;     // Nasz zegar
+    leave.val = tmp_idiots;  // Wartosc jest konieczna, poniewaz gdy val == 0 to procesy nie usuwaja procesu z listy firm wewnatrz kliniki
 
     for (int i = 0; i < klinikawaiting.size(); i++) {
         MPI_Send(&leave, 3, MPI_INT, klinikawaiting.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
@@ -507,6 +509,67 @@ void state5Communication() {
     printf("%d %d : Firma <%d> rozeslala zgody do skolejkowanych firm\n", lamport, id, id);
 }
 
+// Odczekanie na wyslanie dodatkowych wiadomosci--------------------------------
+
+void waitControll() {
+    // Funkcja tymczasowa, na potrzeby debugowania
+    sleep(10);
+
+    tmessage message;
+    message.pid = id;     // ID procesu, wysylamy sami do siebie
+    message.tim = -1;     // Tu normalnie zegar Lamporta, lecz wiadomosci INSIDE
+                          // korzystaja z zegaru Lamporta
+    message.val = 0;      // Nie mamy konkretnej wartosci do podeslania
+    MPI_Send(&message, 3, MPI_INT, id, INSIDE, MPI_COMM_WORLD);
+}
+
+void waitCommunication() {
+    /*
+     * To tymczasowa funkcja na potrzeby debugowania, czeka by
+     * odpowiedziec reszcie firm, ktore jeszcze pracuja
+     */
+    MPI_Status status;
+
+    tmessage recvmessage;
+
+    do {
+        tmessage message;
+        MPI_Recv(&recvmessage, 3, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        switch (status.MPI_TAG) {
+        case KLINIKA_REQUEST:  // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
+            printf("%d %d : Firma <%d> skonczyla prace, otrzymala wiadomosc KLINIKA_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+            lamport++;
+            klinikainside.push_back(recvmessage);
+            message.pid = id;
+            message.tim = lamport;
+            message.val = 0;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
+            lamport++;
+            printf("%d %d : Firma <%d> skonczyla prace, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            break;
+        case OKNO_REQUEST:     // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
+            printf("%d %d : Firma <%d> skonczyla prace, otrzymala wiadomosc OKNO_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+            lamport++;
+            message.pid = id;
+            message.tim = lamport;
+            message.val = 0;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
+            lamport++;
+            printf("%d %d : Firma <%d> skonczyla prace, wysyla wiadomosc OKNO_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            break;
+        default:
+            if (status.MPI_TAG != INSIDE) {
+                lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+                lamport++;
+            }
+        }
+    } while (status.MPI_TAG != INSIDE);
+    idiots = rand() % max_idiots; // Tutaj przychodza idioci do firmy
+    printf("%d %d : Firma <%d> otrzymala %d idiotow\n", lamport, id, id, idiots);
+}
+
 // MAIN-------------------------------------------------------------------------
 
 int main(int argc, char * argv[]) {
@@ -531,70 +594,89 @@ int main(int argc, char * argv[]) {
     K = atoi(argv[1]); // Zadeklarowanie miejsc w klinice
     L = atoi(argv[2]); // Zadeklarowanie okienek w urzedzie
 
-    // STAN 1 oczekiwanie na idiotow
+    while (1) {
 
-    #pragma omp parallel sections num_threads(2)
-    {
-        #pragma omp section
-        {
-            state1Control();
-        }
-        #pragma omp section
-        {
-            state1Communication();
-        }
-    }
+        // STAN 1 oczekiwanie na idiotow
 
-    // STAN 2 klinika
-
-    do {
-        // STAN 2a ubieganie sie o kklinika
-
-        state2aCommunication();
-
-        // STAN 2b przebywanie w klinice
-
-        #pragma omp parallel sections
+        #pragma omp parallel sections num_threads(2)
         {
             #pragma omp section
             {
-                state2bControl();
+                state1Control();
             }
             #pragma omp section
             {
-                state2bCommunication();
+                state1Communication();
+            }
+        }
+    /*
+        // STAN 2 klinika
+
+        do {
+            // STAN 2a ubieganie sie o kklinika
+
+            state2aCommunication();
+
+            // STAN 2b przebywanie w klinice
+
+            #pragma omp parallel sections
+            {
+                #pragma omp section
+                {
+                    state2bControl();
+                }
+                #pragma omp section
+                {
+                    state2bCommunication();
+                }
+            }
+
+            // STAN 2c zwolnienie miejsc w klinice
+
+            state2cCommunication();
+
+        } while (idiots > 0);
+
+    */
+        // STAN 3 ubieganie sie o okno
+
+        state3Communication();
+
+        // STAN 4 przebywanie przy okienku
+
+        #pragma omp parallel sections num_threads(2)
+        {
+            #pragma omp section
+            {
+                state4Control();
+            }
+            #pragma omp section
+            {
+                state4Communication();
             }
         }
 
-        // STAN 2c zwolnienie miejsc w klinice
+        // STAN 5 zwolnienie okienek
 
-        state2cCommunication();
+        state5Communication();
 
-    } while (idiots > 0);
+    }
+    // ODCZEKANIE NA INNE PROCESY
 
-/*
-    // STAN 3 ubieganie sie o okno
-
-    state3Communication();
-
-    // STAN 4 przebywanie przy okienku
-
-    #pragma omp parallel sections num_threads(2)
+    /*#pragma omp parallel sections num_threads(2)
     {
         #pragma omp section
         {
-            state4Control();
+            waitControll();
         }
         #pragma omp section
         {
-            state4Communication();
+            waitCommunication();
         }
     }
 
-    // STAN 5 zwolnienie okienek
+    printf("KONIEC PRACY PROCESU!!!\n");*/
 
-    state5Communication();
-*/
     MPI_Finalize();
     return 0;
 }
