@@ -566,8 +566,6 @@ void waitCommunication() {
             }
         }
     } while (status.MPI_TAG != INSIDE);
-    idiots = rand() % max_idiots; // Tutaj przychodza idioci do firmy
-    printf("%d %d : Firma <%d> otrzymala %d idiotow\n", lamport, id, id, idiots);
 }
 
 // MAIN-------------------------------------------------------------------------
@@ -594,7 +592,7 @@ int main(int argc, char * argv[]) {
     K = atoi(argv[1]); // Zadeklarowanie miejsc w klinice
     L = atoi(argv[2]); // Zadeklarowanie okienek w urzedzie
 
-    while (1) {
+    //while (1) {
 
         // STAN 1 oczekiwanie na idiotow
 
@@ -660,10 +658,10 @@ int main(int argc, char * argv[]) {
 
         state5Communication();
 
-    }
+    //}
     // ODCZEKANIE NA INNE PROCESY
 
-    /*#pragma omp parallel sections num_threads(2)
+    #pragma omp parallel sections num_threads(2)
     {
         #pragma omp section
         {
@@ -675,7 +673,7 @@ int main(int argc, char * argv[]) {
         }
     }
 
-    printf("KONIEC PRACY PROCESU!!!\n");*/
+    printf("%d %d : KONIEC PRACY PROCESU!!!\n", lamport, id);
 
     MPI_Finalize();
     return 0;

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+for i in {0..19}
+do
+  echo "$i : "
+  echo -n "Liczba zgód przyjętych: "
+  cat timeline.txt | sort -n | grep "<$i>" | grep -e "otrzymuje pierwszenstwo" -e "otrzymala wiadomosc OKNO_AGREE" | wc -l
+  echo -n "Liczba zgód wysłanych do procesu: "
+  cat timeline.txt | sort -n | grep "$i$" | grep -e "nie ma pierwszenstwa" -e "wysyla wiadomosc OKNO_AGREE" | wc -l
+done
