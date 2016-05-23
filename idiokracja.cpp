@@ -326,7 +326,8 @@ void state2bCommunication() {
                         placefree.pid = id;
                         placefree.tim = lamport;
                         placefree.val = 0;
-                        MPI_Send(&placefree, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
+                        MPI_Send(&placefree, 3, MPI_INT, klinikawaiting.at(j).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
+                        klinikainside.push_back(klinikawaiting.at(j));
                     }
                     klinikawaiting.clear();
                 }
@@ -354,6 +355,7 @@ void state2cCommunication() {
     for (int i = 0; i < klinikawaiting.size(); i++) {
         MPI_Send(&leave, 3, MPI_INT, klinikawaiting.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
         printf("%d %d : Firma <%d> opuszcza klinike, wysyla zgode do skolejkowanego %d %d\n", lamport, id, id, klinikawaiting.at(i).tim, klinikawaiting.at(i).pid);
+        klinikainside.push_back(klinikawaiting.at(i));
     }
 
     klinikawaiting.clear();
