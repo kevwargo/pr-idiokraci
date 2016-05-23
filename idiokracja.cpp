@@ -51,10 +51,10 @@ std::vector<tmessage> okienkawaiting;
 
 
 // Program constants
-const int max_idiots   = 20; // maksymalna liczba idiotow
-const int max_wait_i   = 10; // maksymalny czas oczekiwania na idiotow
-const int max_wait_k   = 10; // maksymalny czas oczekiwania na klinike
-const int max_wait_o   = 10; // maksymalny czas oczekiwania na okienko
+const int max_idiots   = 60; // maksymalna liczba idiotow
+const int max_wait_i   = 2; // maksymalny czas oczekiwania na idiotow
+const int max_wait_k   = 2; // maksymalny czas oczekiwania na klinike
+const int max_wait_o   = 2; // maksymalny czas oczekiwania na okienko
 
 // Program parameters
 int id,        // Id firmy / procesu
@@ -232,7 +232,10 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
             if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
                 int i = 0;
                 while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
-                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                if (i < klinikainside.size()) {
+                    klinikainside.erase(klinikainside.begin()+i);
+                    printf("%d %d : Firma <%d> oczekuje na klinike, usuwa z listy obecnych w klinice %d\n", lamport, id, id, recvmessage.pid);
+                }
             }
             if (!agree[recvmessage.pid]) {
                 agreements++;
@@ -246,7 +249,7 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
                 lamport++;
             }
         }
-    } while (agreements < N - 1);
+    } while ((agreements < N - 1));// || (miejscaZajete() >= K));
 
     tmp_idiots = idiots;
 
@@ -320,9 +323,9 @@ void state2bCommunication() {
                 while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
                 if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
                 if (miejscaZajete() < K) { // Skoro miejsce sie zwolnilo, i mamy jakies miejsce wg nas w klinice, to wysylamy KLINIKA_AGREE do skolejkowanych
+                    lamport++;
                     for (int j = 0; j < klinikawaiting.size(); j++) {
                         tmessage placefree;
-                        lamport++;
                         placefree.pid = id;
                         placefree.tim = lamport;
                         placefree.val = 0;
@@ -355,10 +358,8 @@ void state2cCommunication() {
     for (int i = 0; i < klinikawaiting.size(); i++) {
         MPI_Send(&leave, 3, MPI_INT, klinikawaiting.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
         printf("%d %d : Firma <%d> opuszcza klinike, wysyla zgode do skolejkowanego %d %d\n", lamport, id, id, klinikawaiting.at(i).tim, klinikawaiting.at(i).pid);
-        klinikainside.push_back(klinikawaiting.at(i));
     }
 
-    klinikawaiting.clear();
     int fieldtoremove;
     for (int i = 0; i < klinikainside.size(); i++) {
         if (klinikainside.at(i).pid != id) {
@@ -369,6 +370,13 @@ void state2cCommunication() {
         }
     }
     klinikainside.erase(klinikainside.begin() + fieldtoremove);
+
+    for (int i = 0; i < klinikawaiting.size(); i++) {
+        klinikainside.push_back(klinikawaiting.at(i));
+    }
+
+    klinikawaiting.clear();
+
     printf("%d %d : Firma <%d> rozeslala zgody do skolejkowanych firm\n", lamport, id, id);
 }
 
@@ -416,6 +424,7 @@ void state3Communication() {
             message.val = 0;
             MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> oczekuje na okienko, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            klinikainside.push_back(recvmessage);
             break;
         case OKNO_REQUEST:   // ubiegamy sie o sekcje, AGREE zalezy od priorytetu
             printf("%d %d : Firma <%d> oczekuje na okienko, otrzymala wiadomosc OKNO_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
@@ -503,6 +512,7 @@ void state4Communication() {
             message.val = 0;
             MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> jest przy oknie, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            klinikainside.push_back(recvmessage);
             break;
         case OKNO_REQUEST:
             printf("%d %d : Firma <%d> jest przy oknie, otrzymala wiadomosc OKNO_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
@@ -554,7 +564,7 @@ void state5Communication() {
 
 void waitControll() {
     // Funkcja tymczasowa, na potrzeby debugowania
-    sleep(100);
+    sleep(120);
 
     tmessage message;
     message.pid = id;     // ID procesu, wysylamy sami do siebie
@@ -588,6 +598,7 @@ void waitCommunication() {
             message.val = 0;
             MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> skonczyla prace, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            klinikainside.push_back(recvmessage);
             break;
         case OKNO_REQUEST:     // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
             printf("%d %d : Firma <%d> skonczyla prace, otrzymala wiadomosc OKNO_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
@@ -643,7 +654,7 @@ int main(int argc, char * argv[]) {
     K = atoi(argv[1]); // Zadeklarowanie miejsc w klinice
     L = atoi(argv[2]); // Zadeklarowanie okienek w urzedzie
 
-    //while (1) {
+    while (1) {
 
         // STAN 1 oczekiwanie na idiotow
 
@@ -709,7 +720,8 @@ int main(int argc, char * argv[]) {
 
         state5Communication();
 */
-    //}
+    }
+    /*
     // ODCZEKANIE NA INNE PROCESY
 
     #pragma omp parallel sections num_threads(2)
@@ -725,7 +737,7 @@ int main(int argc, char * argv[]) {
     }
 
     printf("%d %d : KONIEC PRACY PROCESU!!!\n", lamport, id);
-
+    */
     MPI_Finalize();
     return 0;
 }
