@@ -52,9 +52,9 @@ std::vector<tmessage> okienkawaiting;
 
 // Program constants
 const int max_idiots   = 20; // maksymalna liczba idiotow
-const int max_wait_i   = 2; // maksymalny czas oczekiwania na idiotow
-const int max_wait_k   = 2; // maksymalny czas oczekiwania na klinike
-const int max_wait_o   = 2; // maksymalny czas oczekiwania na okienko
+const int max_wait_i   = 10; // maksymalny czas oczekiwania na idiotow
+const int max_wait_k   = 10; // maksymalny czas oczekiwania na klinike
+const int max_wait_o   = 10; // maksymalny czas oczekiwania na okienko
 
 // Program parameters
 int id,        // Id firmy / procesu
@@ -552,7 +552,7 @@ void state5Communication() {
 
 void waitControll() {
     // Funkcja tymczasowa, na potrzeby debugowania
-    sleep(60);
+    sleep(100);
 
     tmessage message;
     message.pid = id;     // ID procesu, wysylamy sami do siebie
