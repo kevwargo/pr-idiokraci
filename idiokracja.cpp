@@ -52,9 +52,9 @@ std::vector<tmessage> okienkawaiting;
 
 // Program constants
 const int max_idiots   = 20; // maksymalna liczba idiotow
-const int max_wait_i   = 2; // maksymalny czas oczekiwania na idiotow
-const int max_wait_k   = 2; // maksymalny czas oczekiwania na klinike
-const int max_wait_o   = 2; // maksymalny czas oczekiwania na okienko
+const int max_wait_i   = 5; // maksymalny czas oczekiwania na idiotow
+const int max_wait_k   = 5; // maksymalny czas oczekiwania na klinike
+const int max_wait_o   = 5; // maksymalny czas oczekiwania na okienko
 
 // Program parameters
 int id,        // Id firmy / procesu
@@ -98,22 +98,21 @@ void state1Communication() {
      */
     MPI_Status status;
 
-    tmessage recvmessage;
-
     do {
+        tmessage recvmessage;
         tmessage message;
         MPI_Recv(&recvmessage, 3, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         switch (status.MPI_TAG) {
         case KLINIKA_REQUEST:  // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
             printf("%d %d : Firma <%d> oczekuje na idiotow, otrzymala wiadomosc KLINIKA_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
-            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim; // aktualizujemy zegar Lamporta po odebraniu wiadomosci
             lamport++;
-            klinikainside.push_back(recvmessage);
+            klinikainside.push_back(recvmessage); // dodajemy firme do listy obecnych w firmie
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);  // Wysylamy wiadomosc KLINIKA_AGREE, bo nie ubiegamy sie o klinike
             printf("%d %d : Firma <%d> oczekuje na idiotow, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             break;
         case OKNO_REQUEST:     // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
@@ -123,12 +122,22 @@ void state1Communication() {
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD); // Wysylamy wiadomosc OKNO_AGREE, bo nie ubiegamy sie o okna
             printf("%d %d : Firma <%d> oczekuje na idiotow, wysyla wiadomosc OKNO_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             break;
+        case KLINIKA_AGREE:   // musimy czyscic nasza liste zapamietanych procesow w klinice, aby uniknac bledow
+            printf("%d %d : Firma <%d> otrzymala wiadomosc KLINIKA_AGREE zwalniajaca miejsce %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+            lamport++;
+            if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
+                int i = 0;
+                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+            }
+            break;
         default:
-            if (status.MPI_TAG != INSIDE) {
+            if (status.MPI_TAG != INSIDE) { // Gdy dostajemy jakies przestarzale wiadomosci, bez ladu i skladu to jedynie aktualizujemy zegar
                 lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
                 lamport++;
             }
@@ -161,7 +170,9 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
     request.tim = lamport; // Nasz zegar
     request.val = idiots;  // Ilu idiotow chcemy oddac do badan
 
-    for (int i = 0; i < N; i++) {
+    lamport++;    //Inkrementacja zegara Lamporta przed wyslaniem broadcastu
+
+    for (int i = 0; i < N; i++) { // Wysylamy do kazdego KLINIKA_REQUEST, z wyjatkiem siebie samego
         if (i != id) {
             MPI_Send(&request, 3, MPI_INT, i, KLINIKA_REQUEST, MPI_COMM_WORLD);
         }
@@ -169,15 +180,14 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
 
     printf("%d %d : Firma <%d> wyslala broadcast KLINIKA_REQUEST\n", lamport, id, id);
 
-    lamport++;    //Inkrementacja zegara Lamporta po wyslaniu broadcastu
-
-    tmessage recvmessage;
-
     int agreements = 0;
 
     bool * agree = new bool[N];
 
+    for (int i = 0; i < N; i++) agree[i] = false;
+
     do {
+        tmessage recvmessage;
         tmessage message;
         MPI_Recv(&recvmessage, 3, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         switch (status.MPI_TAG) {
@@ -186,15 +196,16 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
             // Nalezy podjac decyzje, kto ma pierwszenstwo do kliniki
             if ((lamport < recvmessage.tim) || ((lamport == recvmessage.tim) && (id < recvmessage.pid))) {
                 // Mam pierwszenstwo do kliniki
-                klinikawaiting.push_back(recvmessage);
+                klinikawaiting.push_back(recvmessage); // Dodaje zatem firme proszaca do listy firm, do ktorych po zakonczeniu wysle ZGODE
                 printf("%d %d : Firma <%d> oczekuje na klinike, otrzymuje pierwszenstwo przed %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
-                if (!agree[recvmessage.pid]) {
+                if (!agree[recvmessage.pid]) { // Jezeli nie otrzymalem dotychczas zgody od tego procesu, to inkrementuje licznik zgod
                     agreements++;
                     agree[recvmessage.pid] = true;
+                    printf("%d %d : Firma <%d> ma juz %d KLINIKA_AGREE\n", lamport, id, id, agreements);
                 }
             }
             else {
-                klinikainside.push_back(recvmessage);
+                klinikainside.push_back(recvmessage);  // W przeciwnym razie on ma pierwszenstwo, wiec zapamietuje go w liscie tych, co sa w klinice
                 printf("%d %d : Firma <%d> oczekuje na klinike, nie ma pierwszenstwa przed %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             }
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
@@ -207,8 +218,8 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> oczekuje na klinike, wysyla wiadomosc OKNO_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             break;
         case KLINIKA_AGREE:   // gdy otrzymujemy zgode, to inkrementujemy licznik zgod
@@ -223,6 +234,7 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
             if (!agree[recvmessage.pid]) {
                 agreements++;
                 agree[recvmessage.pid] = true;
+                printf("%d %d : Firma <%d> ma juz %d KLINIKA_AGREE\n", lamport, id, id, agreements);
             }
             break;
         default:
@@ -233,11 +245,11 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
         }
     } while (agreements < N - 1);
 
-    printf("%d %d : Firma <%d> otrzymala dostep do kliniki z %d idiotami\n", lamport, id, id, K - miejscaZajete() < idiots ? K - miejscaZajete() : idiots);
+    printf("%d %d : Firma <%d> otrzymala dostep do kliniki z %d idiotami\n", lamport, id, id, K - miejscaZajete()); //K - miejscaZajete() < idiots ? K - miejscaZajete() : idiots);
 
     tmp_idiots = idiots;
     klinikainside.push_back(request);
-    idiots = idiots - K - miejscaZajete() > 0 ? idiots - K - miejscaZajete() : 0;
+    idiots = idiots - (K - miejscaZajete()) > 0 ? idiots - (K - miejscaZajete()) : 0;
 
 
     delete [] agree;
@@ -261,9 +273,8 @@ void state2bControl() {
 void state2bCommunication() {
     MPI_Status status;
 
-    tmessage recvmessage;
-
     do {
+        tmessage recvmessage;
         tmessage message;
         MPI_Recv(&recvmessage, 3, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         switch (status.MPI_TAG) {
@@ -271,7 +282,7 @@ void state2bCommunication() {
             printf("%d %d : Firma <%d> jest w klinice, otrzymala wiadomosc KLINIKA_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
             lamport++;
-            if (miejscaZajete() < K) {
+            if (miejscaZajete() < K) { // Jezeli wiemy, ze sa wolne miejsca w klinice, to wysylamy zgode
                 klinikainside.push_back(recvmessage);
                 message.pid = id;
                 message.tim = lamport;
@@ -280,9 +291,9 @@ void state2bCommunication() {
                 lamport++;
                 printf("%d %d : Firma <%d> jest w klinice, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             }
-            else {
+            else { // Jezeli nie ma miejsc w klinice, to nie wysylamy zgody do proszacych, tylko zapamietujemy ich w klinika waiting
                 klinikawaiting.push_back(recvmessage);
-                printf("%d %d : Firma <%d> jest w klinice, w ktorej nie ma miejsca, wiec nie wysyla AGREE do %d %d\n", lamport, id, id, message.tim, message.pid);
+                printf("%d %d : Firma <%d> jest w klinice, w ktorej nie ma miejsca, wiec nie wysyla AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             }
             break;
         case OKNO_REQUEST:     // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
@@ -292,19 +303,19 @@ void state2bCommunication() {
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> jest w klinice, wysyla wiadomosc OKNO_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             break;
         case KLINIKA_AGREE:   // gdy otrzymujemy informacje o opuszczeniu przez jedna z firm
             printf("%d %d : Firma <%d> jest w klinice, otrzymala wiadomosc KLINIKA_AGREE %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
             lamport++;
-            if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
+            if (recvmessage.val > 0) { // Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
                 int i = 0;
                 while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
                 if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
-                if (miejscaZajete() < K) {
+                if (miejscaZajete() < K) { // Skoro miejsce sie zwolnilo, i mamy jakies miejsce wg nas w klinice, to wysylamy KLINIKA_AGREE do skolejkowanych
                     for (int j = 0; j < klinikawaiting.size(); j++) {
                         tmessage placefree;
                         placefree.pid = id;
@@ -329,17 +340,20 @@ void state2bCommunication() {
 
 void state2cCommunication() {
     tmessage leave;
+
     leave.pid = id;          // Nasze id, potrzebne do priorytetu
     leave.tim = lamport;     // Nasz zegar
     leave.val = tmp_idiots;  // Wartosc jest konieczna, poniewaz gdy val == 0 to procesy nie usuwaja procesu z listy firm wewnatrz kliniki
 
+    lamport++;
     for (int i = 0; i < klinikawaiting.size(); i++) {
         MPI_Send(&leave, 3, MPI_INT, klinikawaiting.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
         printf("%d %d : Firma <%d> opuszcza klinike, wysyla zgode do skolejkowanego %d %d\n", lamport, id, id, klinikawaiting.at(i).tim, klinikawaiting.at(i).pid);
     }
-    lamport++;
+
     klinikawaiting.clear();
     int fieldtoremove;
+    lamport++;
     for (int i = 0; i < klinikainside.size(); i++) {
         if (klinikainside.at(i).pid != id) {
             MPI_Send(&leave, 3, MPI_INT, klinikainside.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
@@ -348,7 +362,6 @@ void state2cCommunication() {
             fieldtoremove = i;
         }
     }
-    lamport++;
     klinikainside.erase(klinikainside.begin() + fieldtoremove);
     printf("%d %d : Firma <%d> rozeslala zgody do skolejkowanych firm\n", lamport, id, id);
 }
@@ -364,19 +377,18 @@ void state3Communication() {
     request.tim = lamport; // Nasz zegar
     request.val = 0;       // niezaleznie od liczby idiotow podchodzimy do jednego okienka
 
+    lamport++;    //Inkrementacja zegara Lamporta przed wyslaniem broadcastu
+
     for (int i = 0; i < N; i++) {
         if (i != id) {
             MPI_Send(&request, 3, MPI_INT, i, OKNO_REQUEST, MPI_COMM_WORLD);
         }
     }
+
     int lamporttimeonsend = lamport; // Musimy zapamietac zegar Lamporta przy wysylaniu, aby nie uznac przedawnionej zgody
                                      // z poprzedniego ubiegania sie o sekcje
 
     printf("%d %d : Firma <%d> wyslala broadcast OKNO_REQUEST\n", lamport, id, id);
-
-    lamport++;    //Inkrementacja zegara Lamporta po wyslaniu broadcastu
-
-    tmessage recvmessage;
 
     int agreements = 0;
 
@@ -385,22 +397,23 @@ void state3Communication() {
     for (int i = 0; i < N; i++) agree[i] = false;
 
     do {
+        tmessage recvmessage;
         tmessage message;
         MPI_Recv(&recvmessage, 3, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         switch (status.MPI_TAG) {
         case KLINIKA_REQUEST:  // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
-            printf("%d %d : Firma <%d> oczekuje na okno, otrzymala wiadomosc KLINIKA_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            printf("%d %d : Firma <%d> oczekuje na okienko, otrzymala wiadomosc KLINIKA_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
             lamport++;
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> oczekuje na okienko, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             break;
         case OKNO_REQUEST:   // ubiegamy sie o sekcje, AGREE zalezy od priorytetu
-            printf("%d %d : Firma <%d> oczekuje na okno, otrzymala wiadomosc OKNO_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            printf("%d %d : Firma <%d> oczekuje na okienko, otrzymala wiadomosc OKNO_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             if ((lamport < recvmessage.tim) || ((lamport == recvmessage.tim) && (id < recvmessage.pid))) {
                 // Mam pierwszenstwo do okna
                 okienkawaiting.push_back(recvmessage);
@@ -408,6 +421,7 @@ void state3Communication() {
                 if (!agree[recvmessage.pid]) {
                     agreements++;
                     agree[recvmessage.pid] = true;
+                    printf("%d %d : Firma <%d> ma juz %d OKNO_AGREE\n", lamport, id, id, agreements);
                 }
             }
             else {
@@ -424,7 +438,18 @@ void state3Communication() {
                 if (!agree[recvmessage.pid]) {
                     agreements++;
                     agree[recvmessage.pid] = true;
+                    printf("%d %d : Firma <%d> ma juz %d OKNO_AGREE\n", lamport, id, id, agreements);
                 }
+            break;
+        case KLINIKA_AGREE:   // musimy czyscic nasza liste zapamietanych procesow w klinice, aby uniknac bledow
+            printf("%d %d : Firma <%d> otrzymala wiadomosc KLINIKA_AGREE zwalniajaca miejsce %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+            lamport++;
+            if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
+                int i = 0;
+                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+            }
             break;
         default:
             if (status.MPI_TAG != INSIDE) {
@@ -432,7 +457,7 @@ void state3Communication() {
                 lamport++;
             }
         }
-    } while (agreements < N - L);
+    } while (agreements < N - 1 - L);
 
     printf("%d %d : Firma <%d> otrzymala dostep do okienka\n", lamport, id, id);
 
@@ -470,8 +495,8 @@ void state4Communication() {
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> jest przy oknie, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             break;
         case OKNO_REQUEST:
@@ -481,6 +506,16 @@ void state4Communication() {
             printf("%d %d : Firma <%d> jest przy oknie, kolejkuje zadanie %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
             lamport++;
+            break;
+        case KLINIKA_AGREE:   // musimy czyscic nasza liste zapamietanych procesow w klinice, aby uniknac bledow
+            printf("%d %d : Firma <%d> otrzymala wiadomosc KLINIKA_AGREE zwalniajaca miejsce %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+            lamport++;
+            if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
+                int i = 0;
+                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+            }
             break;
         default:
             if (status.MPI_TAG != INSIDE) {
@@ -500,11 +535,11 @@ void state5Communication() {
     leave.tim = lamport; // Nasz zegar
     leave.val = 0;       // Nieistotna wartosc
 
+    lamport++;
     for (int i = 0; i < okienkawaiting.size(); i++) {
         MPI_Send(&leave, 3, MPI_INT, okienkawaiting.at(i).pid, OKNO_AGREE, MPI_COMM_WORLD);
         printf("%d %d : Firma <%d> opuszcza okienko, wysyla zgode do skolejkowanego %d %d\n", lamport, id, id, okienkawaiting.at(i).tim, okienkawaiting.at(i).pid);
     }
-    lamport++;
     okienkawaiting.clear();
     printf("%d %d : Firma <%d> rozeslala zgody do skolejkowanych firm\n", lamport, id, id);
 }
@@ -544,8 +579,8 @@ void waitCommunication() {
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> skonczyla prace, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             break;
         case OKNO_REQUEST:     // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
@@ -555,9 +590,19 @@ void waitCommunication() {
             message.pid = id;
             message.tim = lamport;
             message.val = 0;
-            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
             lamport++;
+            MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, OKNO_AGREE, MPI_COMM_WORLD);
             printf("%d %d : Firma <%d> skonczyla prace, wysyla wiadomosc OKNO_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            break;
+        case KLINIKA_AGREE:   // musimy czyscic nasza liste zapamietanych procesow w klinice, aby uniknac bledow
+            printf("%d %d : Firma <%d> otrzymala wiadomosc KLINIKA_AGREE zwalniajaca miejsce %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+            lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
+            lamport++;
+            if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
+                int i = 0;
+                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+            }
             break;
         default:
             if (status.MPI_TAG != INSIDE) {
@@ -607,7 +652,7 @@ int main(int argc, char * argv[]) {
                 state1Communication();
             }
         }
-    /*
+
         // STAN 2 klinika
 
         do {
@@ -635,7 +680,7 @@ int main(int argc, char * argv[]) {
 
         } while (idiots > 0);
 
-    */
+
         // STAN 3 ubieganie sie o okno
 
         state3Communication();
