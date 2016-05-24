@@ -133,8 +133,10 @@ void state1Communication() {
             lamport++;
             if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
                 int i = 0;
-                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
-                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                if (!klinikainside.empty()) {
+                    while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                    if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                }
             }
             break;
         default:
@@ -231,11 +233,13 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
             lamport++;
             if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
-                int i = 0;
-                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
-                if (i < klinikainside.size()) {
-                    klinikainside.erase(klinikainside.begin()+i);
-                    printf("%d %d : Firma <%d> oczekuje na klinike, usuwa z listy obecnych w klinice %d\n", lamport, id, id, recvmessage.pid);
+                if (!klinikainside.empty()) {
+                    int i = 0;
+                    while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                    if (i < klinikainside.size()) {
+                        klinikainside.erase(klinikainside.begin()+i);
+                        printf("%d %d : Firma <%d> oczekuje na klinike, usuwa z listy obecnych w klinice %d\n", lamport, id, id, recvmessage.pid);
+                    }
                 }
             }
             if (!agree[recvmessage.pid]) {
@@ -321,8 +325,10 @@ void state2bCommunication() {
             lamport++;
             if (recvmessage.val > 0) { // Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
                 int i = 0;
-                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
-                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                if (!klinikainside.empty()) {
+                    while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                    if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                }
                 if (miejscaZajete() < K) { // Skoro miejsce sie zwolnilo, i mamy jakies miejsce wg nas w klinice, to wysylamy KLINIKA_AGREE do skolejkowanych
                     lamport++;
                     for (int j = 0; j < klinikawaiting.size(); j++) {
@@ -356,9 +362,17 @@ void state2cCommunication() {
     leave.tim = lamport;     // Nasz zegar
     leave.val = tmp_idiots;  // Wartosc jest konieczna, poniewaz gdy val == 0 to procesy nie usuwaja procesu z listy firm wewnatrz kliniki
 
-    for (int i = 0; i < klinikawaiting.size(); i++) {
-        MPI_Send(&leave, 3, MPI_INT, klinikawaiting.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
-        printf("%d %d : Firma <%d> opuszcza klinike, wysyla zgode do skolejkowanego %d %d\n", lamport, id, id, klinikawaiting.at(i).tim, klinikawaiting.at(i).pid);
+    for (int i = 0; i < N; i++)
+        if (i!=id) {
+            MPI_Send(&leave, 3, MPI_INT, i, KLINIKA_AGREE, MPI_COMM_WORLD);
+        }
+
+    /*
+    if (!klinikawaiting.empty()) {
+        for (int i = 0; i < klinikawaiting.size(); i++) {
+            MPI_Send(&leave, 3, MPI_INT, klinikawaiting.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
+            printf("%d %d : Firma <%d> opuszcza klinike, wysyla zgode do skolejkowanego %d %d\n", lamport, id, id, klinikawaiting.at(i).tim, klinikawaiting.at(i).pid);
+        }
     }
 
     int fieldtoremove;
@@ -377,8 +391,27 @@ void state2cCommunication() {
     }
 
     klinikawaiting.clear();
+    */
 
-    printf("%d %d : Firma <%d> rozeslala zgody do skolejkowanych firm\n", lamport, id, id);
+    int fieldtoremove;
+    for (int i = 0; i < klinikainside.size(); i++) {
+        if (klinikainside.at(i).pid != id) {
+            //MPI_Send(&leave, 3, MPI_INT, klinikainside.at(i).pid, KLINIKA_AGREE, MPI_COMM_WORLD);
+            //printf("%d %d : Firma <%d> opuszcza klinike, wysyla zgode do obecnego w klinice %d %d\n", lamport, id, id, klinikainside.at(i).tim, klinikainside.at(i).pid);
+        } else {
+            fieldtoremove = i;
+        }
+    }
+
+    klinikainside.erase(klinikainside.begin() + fieldtoremove);
+
+    for (int i = 0; i < klinikawaiting.size(); i++) {
+        klinikainside.push_back(klinikawaiting.at(i));
+    }
+
+    klinikawaiting.clear();
+
+    printf("%d %d : Firma <%d> rozeslala informacje o wyjsciu do pozostalych firm\n", lamport, id, id);
 }
 
 // STAN 3-----------------------------------------------------------------------
@@ -462,8 +495,10 @@ void state3Communication() {
             lamport++;
             if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
                 int i = 0;
-                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
-                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                if (!klinikainside.empty()) {
+                    while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                    if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                }
             }
             break;
         default:
@@ -528,9 +563,11 @@ void state4Communication() {
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
             lamport++;
             if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
-                int i = 0;
-                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
-                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                if (!klinikainside.empty()) {
+                    int i = 0;
+                    while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                    if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                }
             }
             break;
         default:
@@ -617,8 +654,10 @@ void waitCommunication() {
             lamport++;
             if (recvmessage.val > 0) { //Jezeli ktos zwalnia miejsce w klinice i wysyla nam zgode, to musimy go usunac z naszej listy obecnych w klinice
                 int i = 0;
-                while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
-                if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                if (!klinikainside.empty()) {
+                    while (i < klinikainside.size() && klinikainside.at(i).pid != recvmessage.pid) i++;
+                    if (i < klinikainside.size()) klinikainside.erase(klinikainside.begin()+i);
+                }
             }
             break;
         default:
