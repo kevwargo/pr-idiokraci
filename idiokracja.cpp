@@ -591,7 +591,6 @@ void waitCommunication() {
             printf("%d %d : Firma <%d> skonczyla prace, otrzymala wiadomosc KLINIKA_REQUEST %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
             lamport = lamport > recvmessage.tim ? lamport : recvmessage.tim;
             lamport++;
-            klinikainside.push_back(recvmessage);
             lamport++;
             message.pid = id;
             message.tim = lamport;
@@ -697,7 +696,6 @@ int main(int argc, char * argv[]) {
 
         } while (idiots > 0);
 
-/*
         // STAN 3 ubieganie sie o okno
 
         state3Communication();
@@ -719,7 +717,7 @@ int main(int argc, char * argv[]) {
         // STAN 5 zwolnienie okienek
 
         state5Communication();
-*/
+
     }
     /*
     // ODCZEKANIE NA INNE PROCESY
