@@ -51,10 +51,10 @@ std::vector<tmessage> okienkawaiting;
 
 
 // Program constants
-const int max_idiots   = 60; // maksymalna liczba idiotow
-const int max_wait_i   = 2; // maksymalny czas oczekiwania na idiotow
-const int max_wait_k   = 2; // maksymalny czas oczekiwania na klinike
-const int max_wait_o   = 2; // maksymalny czas oczekiwania na okienko
+const int max_idiots   = 20; // maksymalna liczba idiotow
+const int max_wait_i   = 4; // maksymalny czas oczekiwania na idiotow
+const int max_wait_k   = 4; // maksymalny czas oczekiwania na klinike
+const int max_wait_o   = 4; // maksymalny czas oczekiwania na okienko
 
 // Program parameters
 int id,        // Id firmy / procesu
@@ -69,9 +69,10 @@ int tmp_idiots;// Poprzednia liczba idiotow, jest trzymana na potrzeby wyslania 
 
 int miejscaZajete() {
     int res = 0;
-    for (int i = 0; i < klinikainside.size(); i++) {
-        res += klinikainside.at(i).val;
-    }
+    if (!klinikainside.empty())
+        for (int i = 0; i < klinikainside.size(); i++) {
+            res += klinikainside.at(i).val;
+        }
     return res;
 }
 
@@ -255,7 +256,7 @@ void state2aCommunication() {  // Ten stan wymaga tylko komunikacji
 
     idiots = (idiots - (K - miejscaZajete())) > 0 ? (idiots - (K - miejscaZajete())) : 0;
 
-    printf("%d %d : Firma <%d> otrzymala dostep do kliniki z %d idiotami, przetworzymy ich %d\n", lamport, id, id, tmp_idiots, tmp_idiots < (K - miejscaZajete()) ? tmp_idiots : (K - miejscaZajete()));
+    printf("%d %d : Firma <%d> widzi %d miejsc zajetych, otrzymala dostep do kliniki z %d idiotami, przetworzymy ich %d\n", lamport, id, id, miejscaZajete(), tmp_idiots, tmp_idiots < (K - miejscaZajete()) ? tmp_idiots : (K - miejscaZajete()));
 
     klinikainside.push_back(request);
 
@@ -296,11 +297,11 @@ void state2bCommunication() {
                 message.tim = lamport;
                 message.val = 0;
                 MPI_Send(&message, 3, MPI_INT, status.MPI_SOURCE, KLINIKA_AGREE, MPI_COMM_WORLD);
-                printf("%d %d : Firma <%d> jest w klinice, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+                printf("%d %d : Firma <%d> jest w klinice, jest %d zajetych, wysyla wiadomosc KLINIKA_AGREE do %d %d\n", lamport, id, id, miejscaZajete(), recvmessage.tim, recvmessage.pid);
             }
             else { // Jezeli nie ma miejsc w klinice, to nie wysylamy zgody do proszacych, tylko zapamietujemy ich w klinika waiting
                 klinikawaiting.push_back(recvmessage);
-                printf("%d %d : Firma <%d> jest w klinice, w ktorej nie ma miejsca, wiec nie wysyla AGREE do %d %d\n", lamport, id, id, recvmessage.tim, recvmessage.pid);
+                printf("%d %d : Firma <%d> jest w klinice, jest %d zajetych, w ktorej nie ma miejsca, wiec nie wysyla AGREE do %d %d\n", lamport, id, id, miejscaZajete(), recvmessage.tim, recvmessage.pid);
             }
             break;
         case OKNO_REQUEST:     // nie ubiegamy sie o sekcje, wiec od razu wysylamy AGREE
